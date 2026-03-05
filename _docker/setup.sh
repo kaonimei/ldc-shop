@@ -272,7 +272,7 @@ else
     echo ""
 fi
 
-# --- Caddy reverse proxy auto-config ---
+# --- Reverse proxy config ---
 DOMAIN="${APP_URL#https://}"
 DOMAIN="${DOMAIN#http://}"
 
@@ -281,85 +281,23 @@ echo ""
 echo -e "  容器监听端口 ${BOLD}${PORT}${NC}，需要配置反向代理才能通过域名 ${BOLD}${DOMAIN}${NC} 访问。"
 echo ""
 
-prompt_yn SETUP_CADDY "是否自动安装并配置 Caddy（自动 HTTPS）？" "n"
-
-if [ "$SETUP_CADDY" = "true" ]; then
-    echo ""
-
-    # Install Caddy if not present
-    if ! command -v caddy &> /dev/null; then
-        echo -e "${CYAN}正在安装 Caddy...${NC}"
-
-        if [ -f /etc/debian_version ]; then
-            # Debian / Ubuntu
-            apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl > /dev/null 2>&1 || true
-            curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null
-            curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list > /dev/null
-            apt-get update -qq > /dev/null 2>&1
-            apt-get install -y caddy > /dev/null 2>&1
-        elif [ -f /etc/redhat-release ]; then
-            # CentOS / RHEL / Fedora
-            yum install -y yum-plugin-copr > /dev/null 2>&1 || dnf install -y 'dnf-command(copr)' > /dev/null 2>&1 || true
-            yum copr enable -y @caddy/caddy > /dev/null 2>&1 || dnf copr enable -y @caddy/caddy > /dev/null 2>&1 || true
-            yum install -y caddy > /dev/null 2>&1 || dnf install -y caddy > /dev/null 2>&1
-        else
-            echo -e "${RED}无法自动安装 Caddy，请参考 https://caddyserver.com/docs/install 手动安装${NC}"
-            SETUP_CADDY=false
-        fi
-
-        if command -v caddy &> /dev/null; then
-            echo -e "${GREEN}✓${NC} Caddy 安装成功"
-        else
-            echo -e "${RED}✗ Caddy 安装失败，请手动安装后配置${NC}"
-            SETUP_CADDY=false
-        fi
-    else
-        echo -e "${GREEN}✓${NC} Caddy 已安装"
-    fi
+HAS_NGINX=false
+if command -v nginx &> /dev/null 2>&1 || systemctl is-active --quiet nginx 2>/dev/null; then
+    HAS_NGINX=true
 fi
 
-if [ "$SETUP_CADDY" = "true" ]; then
-    # Write Caddyfile
-    CADDYFILE="/etc/caddy/Caddyfile"
-    cat > "$CADDYFILE" <<CADDYEOF
-${DOMAIN} {
-    reverse_proxy localhost:${PORT}
-}
-CADDYEOF
-
-    echo -e "${GREEN}✓${NC} Caddyfile 已写入 ${CADDYFILE}"
-
-    # Reload or start Caddy
-    if systemctl is-active --quiet caddy 2>/dev/null; then
-        systemctl reload caddy
-        echo -e "${GREEN}✓${NC} Caddy 已重新加载"
-    else
-        systemctl enable caddy > /dev/null 2>&1 || true
-        systemctl start caddy
-        echo -e "${GREEN}✓${NC} Caddy 已启动"
-    fi
-
+if [ "$HAS_NGINX" = "true" ]; then
+    echo -e "  ${GREEN}检测到 Nginx 已安装${NC}，建议直接用 Nginx 反代（如宝塔面板可在面板中配置）。"
     echo ""
-    echo -e "${GREEN}${BOLD}━━━ 部署完成！━━━${NC}"
+    echo -e "  ${BOLD}Nginx 反代配置：${NC}"
     echo ""
-    echo -e "  ${BOLD}最后一步：${NC}请到你的域名 DNS 管理面板，添加一条 A 记录："
-    echo ""
-    echo -e "    主机记录:  ${BOLD}${DOMAIN}${NC}"
-    echo -e "    记录类型:  ${BOLD}A${NC}"
-    echo -e "    记录值:    ${BOLD}你的服务器公网 IP${NC}"
-    echo ""
-    echo -e "  DNS 生效后，访问 ${BOLD}${APP_URL}${NC} 即可（Caddy 自动申请 HTTPS 证书）。"
-    echo ""
-else
-    echo ""
-    echo -e "  如果你已有 Nginx 或其他反代，手动配置示例："
-    echo ""
-    echo -e "  ${BOLD}Nginx:${NC}"
     echo "    server {"
     echo "        listen 443 ssl;"
     echo "        server_name ${DOMAIN};"
+    echo ""
     echo "        ssl_certificate     /path/to/cert.pem;"
     echo "        ssl_certificate_key /path/to/key.pem;"
+    echo ""
     echo "        location / {"
     echo "            proxy_pass http://127.0.0.1:${PORT};"
     echo "            proxy_set_header Host \$host;"
@@ -370,6 +308,93 @@ else
     echo "        }"
     echo "    }"
     echo ""
+    echo -e "  ${YELLOW}宝塔面板用户：${NC}添加站点 → 域名填 ${BOLD}${DOMAIN}${NC} → 设置 → 反向代理 → 目标 URL 填 ${BOLD}http://127.0.0.1:${PORT}${NC}"
+    echo ""
+else
+    prompt_yn SETUP_CADDY "未检测到 Nginx，是否自动安装 Caddy（自动 HTTPS）？" "n"
+
+    if [ "$SETUP_CADDY" = "true" ]; then
+        echo ""
+
+        if ! command -v caddy &> /dev/null; then
+            echo -e "${CYAN}正在安装 Caddy...${NC}"
+
+            if [ -f /etc/debian_version ]; then
+                apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl > /dev/null 2>&1 || true
+                curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null
+                curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list > /dev/null
+                apt-get update -qq > /dev/null 2>&1
+                apt-get install -y caddy > /dev/null 2>&1
+            elif [ -f /etc/redhat-release ]; then
+                yum install -y yum-plugin-copr > /dev/null 2>&1 || dnf install -y 'dnf-command(copr)' > /dev/null 2>&1 || true
+                yum copr enable -y @caddy/caddy > /dev/null 2>&1 || dnf copr enable -y @caddy/caddy > /dev/null 2>&1 || true
+                yum install -y caddy > /dev/null 2>&1 || dnf install -y caddy > /dev/null 2>&1
+            else
+                echo -e "${RED}无法自动安装 Caddy，请参考 https://caddyserver.com/docs/install 手动安装${NC}"
+                SETUP_CADDY=false
+            fi
+
+            if command -v caddy &> /dev/null; then
+                echo -e "${GREEN}✓${NC} Caddy 安装成功"
+            else
+                echo -e "${RED}✗ Caddy 安装失败，请手动安装后配置${NC}"
+                SETUP_CADDY=false
+            fi
+        else
+            echo -e "${GREEN}✓${NC} Caddy 已安装"
+        fi
+    fi
+
+    if [ "$SETUP_CADDY" = "true" ]; then
+        CADDYFILE="/etc/caddy/Caddyfile"
+        cat > "$CADDYFILE" <<CADDYEOF
+${DOMAIN} {
+    reverse_proxy localhost:${PORT}
+}
+CADDYEOF
+
+        echo -e "${GREEN}✓${NC} Caddyfile 已写入 ${CADDYFILE}"
+
+        if systemctl is-active --quiet caddy 2>/dev/null; then
+            systemctl reload caddy
+            echo -e "${GREEN}✓${NC} Caddy 已重新加载"
+        else
+            systemctl enable caddy > /dev/null 2>&1 || true
+            systemctl start caddy
+            echo -e "${GREEN}✓${NC} Caddy 已启动"
+        fi
+
+        echo ""
+        echo -e "${GREEN}${BOLD}━━━ 部署完成！━━━${NC}"
+        echo ""
+        echo -e "  ${BOLD}最后一步：${NC}请到你的域名 DNS 管理面板，添加一条 A 记录："
+        echo ""
+        echo -e "    主机记录:  ${BOLD}${DOMAIN}${NC}"
+        echo -e "    记录类型:  ${BOLD}A${NC}"
+        echo -e "    记录值:    ${BOLD}你的服务器公网 IP${NC}"
+        echo ""
+        echo -e "  DNS 生效后，访问 ${BOLD}${APP_URL}${NC} 即可（Caddy 自动申请 HTTPS 证书）。"
+        echo ""
+    else
+        echo ""
+        echo -e "  手动配置 Nginx 反代示例："
+        echo ""
+        echo "    server {"
+        echo "        listen 443 ssl;"
+        echo "        server_name ${DOMAIN};"
+        echo "        ssl_certificate     /path/to/cert.pem;"
+        echo "        ssl_certificate_key /path/to/key.pem;"
+        echo "        location / {"
+        echo "            proxy_pass http://127.0.0.1:${PORT};"
+        echo "            proxy_set_header Host \$host;"
+        echo "            proxy_set_header X-Real-IP \$remote_addr;"
+        echo "            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;"
+        echo "            proxy_set_header X-Forwarded-Proto \$scheme;"
+        echo "            proxy_set_header X-Forwarded-Host \$host;"
+        echo "        }"
+        echo "    }"
+        echo ""
+    fi
 fi
 
 echo -e "${CYAN}常用命令:${NC}"
